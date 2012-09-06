@@ -1,0 +1,129 @@
+#! /usr/bin/env node
+/*!
+ * hsf - benchmark
+ * Copyright(c) 2012 Taobao.com
+ */
+
+/**
+ * usage: ./benchmark -c conf.js -l out.log -t md
+ */
+
+/**
+ * Module dependencies.
+ */
+var util = require('util');
+var fs = require('fs');
+var Benchmark = require('../');
+var path = require('path');
+var pt = require('printable');
+var optimist = require('optimist')
+var argv = optimist
+    .usage('nbm [options]\nexample:./benchmark -c conf.js -l out.log -t md')
+    .demand(['c'])
+    .options({
+      c: {
+        alias: 'config',
+        describe: 'input config file path, array of inputs'
+      },
+      l: {
+        alias: 'log',
+        describe: '-l FILE, LOG to FILE.'
+      },
+      t: {
+        alias: 'logType',
+        describe: 'log type, could be markdown/md, default text'
+      }
+    })
+    .argv;
+
+var _logstream = null;
+if (argv.l) {
+  _logstream = fs.createWriteStream(argv.l, {flags: 'a'});
+}
+var config = require(path.resolve(argv.config));
+if (!Array.isArray(config)) {
+  config = [config];
+}
+var i = 0;
+var l = config.length;
+function handleBm() {
+  var bm = Benchmark.create(config[i++]);
+  bm.on('piece', function(data) {
+    console.log(data.times + ' request completed,' + data.err + ' error happend.');
+  });
+
+  bm.once('err', function(err) {
+    console.log(err);
+  })
+
+  bm.once('end', function(data) {
+    var result = print(data);
+    console.log(result);
+    var type = (argv.t || '').toLowerCase();
+    if (type === 'md' || type === 'markdown') {
+      result = printMd(data);
+    }
+    _logstream && _logstream.writable && _logstream.write(result + '\n');
+    if (i < l) {
+      setTimeout(handleBm, 1000);
+    } else {
+      process.exit(0);
+    }
+  });
+  setTimeout(function(){
+    console.log('Node-hsf benchmark start.\ntarget: %s:%s, %s(%s)\n Be patient.',
+    this.interface, this.version, this.funName, this.args.toString());
+    bm.startTime = new Date().getTime();
+    bm.start();  
+  }.bind(bm), 500);
+}
+handleBm();
+
+
+function print(data) {
+  var testInfo = util.format('\nBenchmark test at %s:\n%s\n' + 
+             'Number of totaol request: %d, CONCURRENT users: %d\n',
+              new Date(),data.description, data.requests, data.concurrent);
+  var info = [['Time taken for tests:', data.use/1000, 'seconds'],
+               ['Complete requests:', data.times],
+               ['Failed requests:', data.err],
+               ['Requests per second:', ((data.times * 1000)/data.use).toFixed(2), '[#/sec]'],
+               ['Time per request:', (data.totalUse / data.times).toFixed(2), '[ms]'],
+               ['Max response time:',data.max + '[ms]']];
+
+  var distributeInfo = [['Response time', 'Num', 'Proportion']];
+  distributeInfo.push(['0 ~ ' + data.distributeValue[0], data.distribute[0], ((data.distribute[0] / data.times) * 100).toFixed(2) + '%']);
+  var l = data.distribute.length;
+  for (var i = 0; i < l - 2; i++) {
+    distributeInfo.push([data.distributeValue[i] + ' ~ ' + data.distributeValue[i + 1],
+     data.distribute[i + 1], ((data.distribute[i + 1] / data.times) * 100).toFixed(2) + '%']);
+  }
+  distributeInfo.push([' > ' + data.distributeValue[l - 2], data.distribute[l - 1], ((data.distribute[l - 1] / data.times) * 100).toFixed(2) + '%']);
+  
+  return testInfo + pt.print(info, 1) + 'Response time distribute:\n' + pt.print(distributeInfo, ' | ') + '\n'; 
+}
+
+function printMd(data) {
+  var testInfo = util.format('\n#### Benchmark test at %s:   \n' + 
+             'Number of totaol request: %d, CONCURRENT users: %d   \n',
+              new Date(),data.description, data.requests, data.concurrent);
+  var info = [['Time taken for tests:', data.use/1000, 'seconds'],
+               ['Complete requests:', data.times],
+               ['Failed requests:', data.err],
+               ['Requests per second:', ((data.times * 1000)/data.use).toFixed(2), '[#/sec]'],
+               ['Time per request:', (data.totalUse / data.times).toFixed(2), '[ms]'],
+               ['Max response time:',data.max + '[ms]']];
+
+  var statistic = '\n```\n' + pt.print(info, 1) + '\n```\n';
+  var distribute = '#### Response time distribute:\n';
+  var distributeInfo = [['Response time', 'Num', 'Proportion']];
+  distributeInfo.push(['0 ~ ' + data.distributeValue[0], data.distribute[0], ((data.distribute[0] / data.times) * 100).toFixed(2) + '%']);
+  var l = data.distribute.length;
+  for (var i = 0; i < l - 2; i++) {
+    distributeInfo.push([data.distributeValue[i] + ' ~ ' + data.distributeValue[i + 1],
+     data.distribute[i + 1], ((data.distribute[i + 1] / data.times) * 100).toFixed(2) + '%']);
+  }
+  distributeInfo.push([' > ' + data.distributeValue[l - 2], data.distribute[l - 1], ((data.distribute[l - 1] / data.times) * 100).toFixed(2) + '%']);
+  distribute += '\n```\n' + pt.print(distributeInfo, ' | ') + '\n```\n\n';
+  return testInfo + statistic + distribute;
+}
